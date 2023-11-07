@@ -1,0 +1,199 @@
+---
+title: "Financial data analysis"
+author: "Fabrice Rossi"
+format: html
+---
+
+```{r}
+#| message: false
+here::i_am("dplyr-102.Rproj")
+library(here)
+library(vroom) ## or readr
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+library(patchwork)
+```
+
+## Data loading
+
+```{r}
+#| message: false
+clients <- vroom(here("data", "client.csv"))
+accounts <- vroom(here("data", "account.csv"))
+disp <- vroom(here("data", "disp.csv"))
+```
+
+## Joining data tables
+
+A collection of joining functions of the form `*_join`.
+
+### Inner join
+
+```{r}
+da <- inner_join(accounts, disp)
+```
+
+```{r}
+cda <- inner_join(clients, da, by = join_by(client_id), suffix = c("_home", "_bank"))
+```
+
+### Home district versus bank district
+
+```{r}
+home_diff_bank <- cda |> filter(district_id_home != district_id_bank) |> nrow()
+```
+
+We observe that `r home_diff_bank` clients have a bank in another district as the one they live in.
+
+```{r}
+cda |>
+  group_by(account_id) |> 
+  distinct(district_id_home) |> 
+  summarise(N=n()) |> 
+  filter(N>1)
+```
+
+### Gender gap?
+
+```{r}
+clients |> count(gender)
+```
+
+```{r}
+clients |> 
+  ggplot(aes(x=gender)) + geom_bar() + coord_flip()
+```
+
+```{r}
+cda |> 
+  count(gender, type) |>
+  group_by(gender) |>
+  mutate(freq=n/sum(n)) |>
+  select(-n) |> 
+  ungroup() |>
+  pivot_wider(values_from = freq, names_from = type)
+```
+
+```{r}
+cda |>
+  ggplot(aes(y=gender, fill=type)) + geom_bar(position = "fill")
+```
+
+```{r}
+chisq.test(cda |> pull(gender),
+           cda |> pull(type))
+```
+
+# Loan analysis
+
+```{r}
+loan <- vroom(here("data", "loan.csv"))
+```
+
+We will want the status to be factors and the id to be integer. It is possible to do so when we are loading the data but if the data is big, it is preferable to separate loading and modification
+
+There is two way to mutate statute in factore
+
+-   we can use as factor between our paranthesis but can cause problem. Here we have 4 values, we will explicit the factor. All value differnt will be explicitly discernable as being transformed in NA
+
+ 
+
+```{r}
+loan <- loan %>% mutate(status=factor(status, levels=c("A","B","C","D")),
+loan_id = as.integer(loan_id),
+account_id= as.integer(account_id))
+```
+
+```{r}
+loan %>% filter(is.na(status))%>% nrow()
+```
+
+We can even put it in the quarto directly :
+
+Test errors --\> there is `r loan %>% filter(is.na(status))%>% nrow()`
+
+```{r}
+ggplot(loan, aes(x=status))+geom_bar()
+```
+
+```{r}
+loan %>%
+  group_by(status) %>%
+  summarise(sum(amount))
+```
+
+```{r}
+ggplot(loan, aes(x=status, y= amount))+geom_boxplot()
+```
+
+2 ways, one data
+
+```{r}
+loan %>% 
+  group_by(status) %>% summarise("total amount" = sum(amount))%>%
+                                          ggplot(aes(x=status, y=`total amount`))+geom_col()
+```
+
+Dont forget the " \` "
+
+Patchwork allow us to patch many graph
+
+```{r}
+loan_amounts <- loan %>% group_by(status) %>%  summarise ("total amount") = sum(amount)) %>% ggplot(aes(x=status, y=`total amount`))+geom_col()
+```
+
+```{r}
+loan_counts + loan_amounts
+```
+
+ 
+
+```{r}
+loan_counts / loan_amounts
+```
+
+Sometimes, the data will not be easibly readable.
+
+One way to improve the readibility is to filter the data and represent them individiually
+
+```{r}
+loan %>% filter(status %in% c("A", "B"))%>% ggplot(aes(x=status))+geom_bar()
+```
+
+To compare it with C and D whe can do so :
+
+```{r}
+(loan %>% filter(status %in% c("A", "B"))%>% ggplot(aes(x=status))+geom_bar()) +
+  (loan %>% filter(status %in% c("C", "D"))%>% ggplot(aes(x=status))+geom_bar())
+```
+
+```{r}
+loan <- loan %>% 
+  mutate(active=if_else(status %in% c("A", "B"), "Past", "Active"))
+```
+
+```{r}
+ggplot(loan, aes(x="status"))+
+```
+
+### Combined analysis
+
+```{r}
+loan_cda <- loan %>% inner_join(cda, by= join_by(account_id), suffix = c("_loan", "_account"))
+```
+
+```{r}
+loan_cda %>% group_by(loan_id) %>% summarise(nb_clients = n())
+```
+
+We had a value Loan 1 but now after the fusion, Loan 1 has be multiplied by each time it has an equivalent . Dyplr does not knwo that Loan 1 is an unique value in the original dataset
+
+```{r}
+loan_cda %>% 
+  group_by(loan_id) %>% 
+  mutate(nb_clients = n()) %>% slice_head() %>%
+  select (-client_id,-gender,-birth_date)%>%
+  ungroup() %>% 
+  ggplot(aes(y=nb_clients, fill=default))+ geom_bar()
+```
